@@ -1,11 +1,13 @@
 package gorilla
 
 import (
-	"errors"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Websocket/pkg/types"
 )
 
 var upgrader = websocket.Upgrader{
@@ -17,56 +19,66 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	//TODO make concurrent
-	clientSessions map[int]*session
-	//TODO replace with something nicer
-	id     int
-	idChan chan int
+	clientChan chan types.Client
+	clients    map[string]*Client
+	sync.RWMutex
 }
 
-func NewWsServer(url string, port string) (*Server, <-chan int) {
+func NewServer(url, port string) (*Server, error) {
 	server := &Server{
-		clientSessions: map[int]*session{},
-		idChan:         make(chan int),
+		clients:    map[string]*Client{},
+		clientChan: make(chan types.Client),
 	}
+
 	http.HandleFunc(url, server.handler)
 	go http.ListenAndServe(":"+port, nil)
 
-	return server, server.idChan
+	return server, nil
 }
 
-func (server *Server) handler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println(err)
+func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
+	addr := r.RemoteAddr
+
+	s.Lock()
+	if _, ok := s.clients[addr]; ok {
+		log.Printf("Connection already established for address: %s", addr)
+		w.WriteHeader(http.StatusBadRequest)
+		s.Unlock()
 		return
 	}
 
-	server.clientSessions[server.id] = &session{Conn: conn}
-	server.id++
-	server.idChan <- server.id
-}
-
-func (server *Server) Send(id int, msg interface{}) error {
-	if sess, ok := server.clientSessions[id]; ok {
-		return sess.send(msg)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		s.Unlock()
+		return
 	}
 
-	return errors.New("Session does not exist")
+	c := &Client{conn: conn}
+	s.clients[addr] = c
+	s.Unlock()
+	s.clientChan <- c
 }
 
-func (server *Server) Receive(id int) ([]byte, error) {
-	if sess, ok := server.clientSessions[id]; ok {
-		return sess.receive()
+// Broadcast sends a given message to all connected clients
+func (s *Server) Broadcast(msg interface{}) {
+	// Put clients into slice first to lock the clients map for as little time as possible
+	s.RLock()
+	clients := []*Client{}
+	for _, c := range s.clients {
+		clients = append(clients, c)
 	}
+	s.RUnlock()
 
-	return nil, errors.New("Session does not exist")
+	for _, c := range clients {
+		if err := c.Send(msg); err != nil {
+			log.Printf("Unable to send message to client %s, Error: %s", c.conn.RemoteAddr().String(), err.Error())
+		}
+	}
 }
 
-func (server *Server) Close(id int) error {
-	if sess, ok := server.clientSessions[id]; ok {
-		return sess.close()
-	}
-
-	return errors.New("Session does not exist")
+// ListenForNewClients returns a channel that all new ws clients are pushed into
+func (s *Server) ListenForNewClients() <-chan types.Client {
+	return s.clientChan
 }
