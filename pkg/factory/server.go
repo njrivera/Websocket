@@ -26,7 +26,7 @@ func NewWsServer(wsType, url, port string) (websockettypes.Server, error) {
 	return newServer(wsType, url, port)
 }
 
-func NewDefaultWsServer() {
+func NewDefaultWsServer(url, port string) (websockettypes.Server, error) {
 	wsType := os.Getenv("WS_TYPE")
 	if wsType == "" {
 		log.Printf("WS_TYPE not set - defaulting to gorilla")
