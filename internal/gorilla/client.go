@@ -8,6 +8,10 @@ type Client struct {
 	conn *websocket.Conn
 }
 
+func (c *Client) GetName() string {
+	return c.conn.RemoteAddr().String()
+}
+
 func (c *Client) Send(msg interface{}) error {
 	return c.conn.WriteJSON(msg)
 }
