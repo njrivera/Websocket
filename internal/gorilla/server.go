@@ -3,6 +3,7 @@ package gorilla
 import (
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -28,6 +29,10 @@ func NewServer(url, port string) (*Server, error) {
 	server := &Server{
 		clients:    map[string]*Client{},
 		clientChan: make(chan types.Client),
+	}
+
+	if !strings.HasSuffix(url, "/") {
+		url = "/" + url
 	}
 
 	http.HandleFunc(url, server.handler)
